@@ -147,10 +147,17 @@ sum(k)
 
 vector[element_number], length(vector)
 
-```{r access_vectors, echo=TRUE}
+```{r access_vectors3, echo=TRUE}
 k
 k[2]
 length(k)
+```
+
+## How to access and modify parts of data structures: vectors
+
+vector[element_number], length(vector)
+
+```{r access_vectors, echo=TRUE}
 (k[4] <- 15)
 length(k)
 ```
@@ -161,7 +168,7 @@ vector[element], length(vector)
 
 ```{r access_vectors2, echo=TRUE}
 animals <- c("platypus", "nudibranch", "potoo", "peacock mantis shrimp")
-animals[3:4]
+animals[2:4]
 ```
 
 ## How to access and modify parts of data structures: tables
@@ -181,6 +188,13 @@ table$column, table[rows, columns], dim(table)
 ```{r access_tables2, echo=TRUE, eval=T}
 dim(df)
 df[1:2,]
+```
+
+## How to access and modify parts of data structures: tables
+
+table$column, table[rows, columns], dim(table)
+
+```{r access_tables3, echo=TRUE, eval=T}
 df[df$colour=="brown",] #select rows that match a condition
 ```
 
@@ -222,19 +236,28 @@ mpg # data set included in ggplot2 package
 mpg %>% 
   filter(manufacturer=="lincoln")
 
-mpg %>%
-  select(-c(displ,year,cyl,trans,drv,fl,class))
+mpg[mpg$manufacturer=="lincoln",]
 ```
+
+## Working with tables
+
+```{r filter_select2, echo=TRUE, eval=T}
+mpg %>%
+  select(-c(displ,year,cyl,trans,drv,fl,class))%>%
+  head()
+
+(mpg[, -c(3:8, 9,10)])
+```
+
 ## Working with tables
 
 ```{r mutate, echo=TRUE, eval=TRUE}
-mpg %>% 
-  dplyr::rename(fuel=fl) %>%
-  head(n=2)
-
 mpg %>%
   mutate(city_kmL=cty/2.352) %>%
-  select(c(manufacturer, model, displ, year, city_kmL))
+  select(c(manufacturer, model, displ, year, city_kmL)) %>%
+  head()
+
+(mpg["city_kmL"] <- mpg$cty/2.352)
 ```
 
 ## Working with tables
@@ -244,6 +267,8 @@ mpg %>%
 summary <- mpg %>%
   summarise(mean_fuel = mean(cty))
 summary
+
+mean(mpg$cty)
 ```
 
 ## Working with tables
@@ -275,21 +300,23 @@ mpg %>%
   select(c(manufacturer, model, year, trans, country_origin))
 ```
 
-## Working with tables
-
-```{r diff_tidy_base, echo=T, eval=TRUE}
-mpg %>%
-  summarise(mean_fuel = mean(cty))
-
-mean(mpg$cty)
-```
-
 # Data visalisation with ggplot2  
 
 ggplot(table, aes(x=column1, y=column2))+geom_...()
 
 ```{r plot1, echo=TRUE, eval=TRUE}
-ggplot(mpg, aes(x=manufacturer, y=cty))+geom_point()
+ggplot(mpg, aes(x=manufacturer, y=cty))+
+  geom_point()
+```
+
+## Data visalisation with ggplot2  
+
+ggplot(table, aes(x=column1, y=column2))+geom_...()
+
+```{r plot2, echo=TRUE, eval=TRUE}
+ggplot(mpg, aes(x=manufacturer, y=cty))+
+  geom_bar(stat = "summary", fun = "mean")+
+  ggtitle("Mah plotttt")
 ```
 
 ## Data visualisation with ggplot2  
