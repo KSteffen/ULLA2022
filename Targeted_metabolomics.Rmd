@@ -1,0 +1,388 @@
+---
+title: "Targeted metabolomics"
+author: "Karin Steffen"
+output: 
+  html_document:
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy=TRUE, message = FALSE, warning = FALSE)
+```
+
+## Learning outcomes: Multiple plots, reordering factors, correlation analysis, t-test, while loop
+
+This exercise is based on a set data derived from (untargeted) metabolomics (UPLC-HRMS). The data was collected by me during my PhD on deep-sea marine sponges (an animal, the species is called _Geodia barretti_), which are an excellent starting point for bioprospecting, i.e. the discovery of novel bioactive compounds. Typically, we keep sponge samples either frozen or freeze-dried. To prepare the samples for metabolomics, the freeze-dried sponge is manually ground (they're very brittle), extracted with 70% ethanol in water, the extract is centrifuged, decanted and dried until all samples are processed. The samples are then reconstituted according to mobile phase/chromatography column ('Reversed phase' RP or 'Hydrophilic interaction liquid chromatography' HILIC) and the data was acquired on a Waters UPLC-HRMS instrument.
+
+### Multiple plots
+
+In this first part, we'll look at a table with mass spectrometry signal intensity by sample for a number of known natural products (bioactive compounds). Of course I kept the metadata, i.e. information about the samples, too. We'll use ggplot to visually explore the data and then perform correlation analyses. The data is called 'metabolite_master.csv' and the corresponding metadata is 'metadata_metabolomics.csv'. Take a minute to load the data and familiarize yourself with it. I called the first data set "compounds" and the second one "meta_data". How many samples are in each of the data sets?
+
+Hint:
+```{r}
+# try read.csv(), read_csv() or read_delim()
+
+# Look at the data frames any way you like
+```
+
+Solution:
+```{r}
+compounds <- read.csv("data/metabolite_master.csv", header = T, sep = ",")
+meta_data <- read.csv("data/metadata_metabolomics.csv", header = T, sep = ";")
+```
+
+Answer:
+```{r}
+# I only gave you metabolite data for one species (GbXX= Geodia barretti sample XX), for which we have 16 samples. The meta data has more infomrmation on other samples also included in this study.
+```
+
+All samples come roughly from the same area (Davis Strait between Canada and Greenland). However, they com from different depths. What we wanted to investigate is whether there is a correlation between sample depth and the amount (approximated by signal intensity) of a compound/metabolite. What is the depth of the deepest and shallowest sample of _Geodia barretti_?
+
+```{r, eval=FALSE}
+# How I came up with the right command (You can run the individual lines and see how I worked on getting the right information step by step)
+
+# Select only those rows from the data set where the Species column contains "Geodia barretti"
+meta_data[meta_data$Species=="Geodia barretti",]
+# Next, we need fo figure out how to address the column with depth 
+meta_data[meta_data$Species=="Geodia barretti",]$Depth
+# Conveniently, the functions to get the minimum and maximum are called min() and max()
+min(meta_data[meta_data$Species=="Geodia barretti",]$Depth)
+max(meta_data[meta_data$Species=="Geodia barretti",]$Depth)
+# same as:
+```
+
+```{r}
+library(tidyverse)
+#library(dplyr)
+
+meta_data %>%
+  filter(Species=="Geodia barretti") %>%
+  dplyr::select(Depth) %>% # I had to specify which version of the 'select' command I wanted to use. This command exists in several packages/libraries (MASS)
+  min()
+
+meta_data %>%
+  filter(Species=="Geodia barretti") %>%
+  dplyr::select(Depth) %>%
+  max()
+```
+
+To start, I like to just have a look at data, that is visualise metabolites/compound signal against depth. However, there are two things I need to do before I can plot the data. What's that?
+
+Answer:
+```{r}
+# Add depth infromation to the 'compounds' data set.
+
+# use pivot_longer() to get it into the long format. I'll call the values "signal" and the different compounds "compound". As I'm lazy, the new data frame get called "cmp".
+
+# The order does not matter.
+```
+
+Solution:
+```{r}
+#colnames(compounds)
+cmp <- pivot_longer(compounds, cols = !c(unified_ID), values_to = "signal", names_to = "compound")
+cmp <- left_join(cmp, meta_data[,c("unified_ID", "Depth")]) # Do you understand the difference between the different join_... functions?
+head(cmp)
+```
+
+Please plot all compounds with dots, color them by compound and connect them with a line.
+```{r}
+ggplot(cmp, aes(x=Depth, y=signal, group=compound))+
+  geom_line()+
+  geom_point(aes(col=compound))
+```
+
+Wow, this is a mess and wasn't helpful. Maybe we should give each compound an own plot. Does that mean we have to generate 25 individual plots? Nope =) There are two convenient functions that automate the task `facet_grid()` and `facet_wrap()`.
+
+Use __facet_grid()__ to split the plots by compound. Here, I specified that the original plot should be split in rows according to compounds.
+
+```{r, fig.asp=2}
+ggplot(cmp, aes(x=Depth, y=signal, group=compound))+
+  geom_line()+
+  geom_point(aes(col=compound))+
+  facet_grid(rows = vars(compound))
+
+# You can also write this command as facet_grid(compound~.) and  facet_grid(.~compound) for rows/columns respectively.
+```
+
+facet_grid() allows you to align plots horizontally or vertically (or both). But that's still a bit much and not a great overview. 
+
+__facet_wrap()__ allows you to specify a plain number for either rows or columns to set up a grid:
+```{r, fig.asp=0.8, out.width="90%"}
+ggplot(cmp, aes(x=Depth, y=signal, group=compound))+
+  geom_line()+
+  geom_point(aes(col=compound))+
+  facet_wrap(.~compound, ncol = 5)
+```
+
+Aaah... that's starting to look better (At least on your screens/plot windows)! There's one major thing I'd change before this figure is informative. What could that be?
+
+Answer:
+```{r}
+# I think one of the major issues is that the plots all have the same scales/axes. This can be interesting in some cases, but here we can't really see what's going on in many of them. Your task now is to figure out how to allow the scales/axes tobe set independently.
+
+# Could be useful to move the legend to the bottom, too?
+```
+
+Solution:
+```{r, fig.asp=1.1, out.width="90%"}
+ggplot(cmp, aes(x=Depth, y=signal, group=compound))+
+  geom_line()+
+  geom_point(aes(col=compound))+
+  facet_wrap(.~compound, ncol = 5, scales="free")+
+  theme(legend.position="bottom")
+```
+
+Good, we're getting somewhere! I think the line connecting the dots isn't really helpful at this point. I think we should drop it. If you feel like it, you could replace it with a regression line instead.
+
+```{r, fig.asp=1.1, out.width="90%"}
+ggplot(cmp, aes(x=Depth, y=signal, group=compound))+
+  geom_point(aes(col=compound))+
+  facet_wrap(.~compound, ncol = 5, scales="free")+
+  geom_smooth(method = "lm")+
+  theme(legend.position="none")
+```
+
+_If you feel like playing around further with this plot, why not try to find a nice clean theme, rotate the labels on the x-axis by 90° and fix the text in the title boxes of each plot? Or do whatever you feel like ;-)_
+
+__Actual bonus plotting task/ useful trick__: Changing the order of groups on e.g. the x-axis. Take the 'compounds' data frame and plot any single compound (I've chosen barettin) versus the "unified_ID". 
+ 
+```{r}
+ggplot(compounds, aes(x=unified_ID, y=barettin))+geom_point()
+```
+
+These samples IDs are ordered according to depth, but as you see, the x-axis is now screwed up. It's not Gb1, Gb2, Gb3 but Gb1, Gb10, Gb11 etc. If you wanted to keep the labelling, how could you reorder the categorical variables on the x-axis?
+
+Hint:
+```{r}
+# add the depth information as we've done before
+
+# check out the library forcats (part of tidyverse)
+```
+
+Solution:
+```{r}
+compounds %>%
+  left_join(., meta_data[,c("unified_ID", "Depth")]) %>%
+  ggplot(., aes(x=fct_reorder(unified_ID, Depth), y=barettin))+geom_point() # reordering 'unified_ID' by 'Depth'
+```
+
+### Correlation analyses
+
+Let's sneak in some "stats" here. From those regression lines, it seems that in some cases, there could be a correlation between signal intensity ("amount of a compound") and sample depth. Let's test that with a proper correlation test. The function we use is cor.test(). If you have a look at the help documentation, you see the input is "x, y: numeric vectors of data values. x and y must have the same length." plus a number of arguments specifying output and behavior of the test. x and y would be the sample depth and the corresponding signal intensity of a compound. 
+
+We'll break it down one compound at a time. Which data set would you use? How would you modify it?
+
+Hint:
+```{r}
+# Given that we typically work in columns, the 'compounds' data frame is quite suitable. It just lacks a column for depth. Can you add that information as you did before? 
+
+# I'll create a new data frame called 'stats'.
+```
+
+Solution:
+```{r}
+stats <- left_join(compounds, meta_data[,c("unified_ID", "Depth")])
+```
+
+Now, can you figure out how to write a correlation test between depth and the compound barettin?
+
+Solution:
+```{r}
+cor.test(stats$Depth, stats$barettin)
+```
+
+In order to learn how to effectively collect the output of this test, save it to an object and figure out how you get only the _p_-value and the correlation estimate ("cor") from it. Once you've saved the the output, you can click on it on in the right top environment window or tab complete after the df$ sign. 
+
+These two numbers are generally considered important. The estimate tells you the strength of the correlation (it goes from -1 to +1 where 1 is strong positive correlation, 0 means no correlation and -1 strong negative correlation). The _p_-value tells you whether the correlation is likely due to coincidence or not.
+
+Solution:
+```{r}
+barettin_correlation <- cor.test(stats$Depth, stats$barettin)
+barettin_correlation$p.value
+barettin_correlation$estimate
+```
+
+Now, in order to collect the correlation test results for all compounds you could just manually specify every column and collect the results. And that would work just fine.
+
+### Bonus: a loop
+
+Buuuuut, I love coding and I want to show you how to do it automatically and effective. I think being able to automate things is really one of the central strengths of coding. It might get a little complicated but I'll try my best to walk you through slowly and gently. Please don't hesitate to ask me if anything is unclear. I'd also like to invite you if you feel that this is overwhelming, you can skip ahead (e.g. to the t-test section or the next set of exercises & visualizations) and just work on the next chapter instead. You should learn what you feel is most useful to you.
+
+What we're trying to solve is: How to iterate across the columns in the data frame? There are a number of ways to do what is called [flow control](https://adv-r.hadley.nz/control-flow.html). I'll show you how to use a __while loop__. Below you'll see a very rudimentary example of the syntax (i.e. how to write it). 'while' repeats the loop as long as the condition is true.
+
+```
+while (condition) {
+  stuff that is supposed to happen
+  one line
+  at a time.
+}
+```
+
+The way I'm going to use it is: I will build a counter (a number that increases by one with every iteration of the loop), that counts across the number of columns in the 'stats' data frame. This "counter number" comes in handy as you know you can address columns either by their name as we did previously e.g. `stats$barettin` or you could just address the columns by their numbers as in `stats[,16]`. Try it out if you like, both commands give you the same result if the barettin column is column number 16.
+
+Let's build the counter first. Type the code in the chunk below yourself and execute the first line only (`n <- 0`). You'll see that n and 0 appears in "values" in the environment panel in the top right. Now only execute the line `n <- n+1`. What change do you see? Do it again. Now finally execute the whole while loop. What is n now?
+
+```
+n <- 0 # n is our counter, we set it to 0
+
+while(n<27){
+  n <- n+1
+}
+```
+
+I chose the number 27 as the data frame we're working with has 27 columns. We can formulate it a bit more elegantly/generally by putting a function to get the right dimension of the data frame and also by offsetting. What I mean by the latter is that the first column isn't actually numbers, it has the "unified_ID", i.e. the sample name. We can either delete that column or just start with column 2. Combining both ideas, the last column is also special, as that one is depth. We'll correlate all compounds with it but we don't want to correlate it to itself, right?
+
+Do you think you can make those changes?
+
+Solution:
+```{r}
+n <- 1 # when we set n to 1 the first step in the loop will be to add 1, so we'll be at 2 :)
+
+#dim(stats) # gives you two numbers: the number of rows and columns. We're interest in the second only:
+
+#dim(stats)[2] # gives you the second only. 
+
+# Now, to omit the last column, we subtract 1 from that number:
+
+#dim(stats)[2]-1
+
+while(n<dim(stats)[2]-1){
+  n <- n+1
+}
+
+```
+This setup iterates from number 2 to 26, so we can address every column with a compound in our data frame.
+
+The next step is to plug in the function for the correlation test. Can you give it a try yourself?
+
+Solution:
+```{r}
+n <- 1
+
+while(n<dim(stats)[2]-1){
+  n <- n+1
+  cor.test(stats[,n], stats$Depth)
+}
+
+```
+
+How come you don't see anything? I suppose the stuff that's going on in the while loop isn't printed to screen. We didn't get any output from the counter itself either. (If you want to see that something is happening indeed, you can replace `cor.test(stats[,n], stats$Depth)` with `k <- cor.test(stats[,n], stats$Depth)`). Otherwise you'll have to believe me that this is correct for now and we need to collect the results ourselves. That'll be the proof :p
+
+Let's make up an empty data frame (called "results") to collect out results, the p-value and estimate for every correlation. We'll start by picking the column names of the stats data frame as a first column in our new data frame. Then we add two more columns ("estimate" and "p-value") and set their content to "NA".
+
+Hint:
+```{r}
+#colnames() # gives you column names
+
+# colons define a sequence, e.g. '3:7' is [1] 3 4 5 6 7
+
+#data.frame() # converts a sequence/vector into a data frame
+```
+
+Solution:
+```{r}
+results <- data.frame(colnames(stats[2:(dim(stats)[2]-1)]))
+
+# You can unpack this as follows:
+
+#colnames(stats) # gives you all the column names. But we only want those for which we're going to collect the correlation estimates and p-values. So the column names from the second column (2) to (:) the second to last (dim(stats)[2]-1). The second part needs to be in parentheses because otherwise R seems to subtract somehow from the whole sequence. oO
+
+#colnames(stats[2:(dim(stats)[2]-1)]) # SO these are all the compounds we're going to evaluate
+
+#and we say that that should be a data frame instead of just a character vector using data.frame()
+
+#results # have a look at it. The column name is bad, so we'll call it "compound"
+colnames(results) <- "compound"
+results["estimate"] <- NA
+results["p_value"] <- NA
+
+head(results) #looks good
+```
+
+Now that we have out dummy data frame, let's populate it with results from the while loop correlation analysis! we want to save the estimate of every iteration loop in the corresponding cell of our results. We just need to remember that the first correlation will have the counter number 2, so we'll substract 1 when we try to find the right cell in the 'results' data frame, right? 
+
+```{r}
+n <- 1
+
+while(n<dim(stats)[2]-1){
+  n <- n+1
+  k <- cor.test(stats[,n], stats$Depth) # do the correlation test and save it as 'k'
+  results$estimate[n-1] <- k$estimate # take the estimate from the correlation analysis and save it in the data frame we just created
+  results$p_value[n-1] <- k$p.value # take the p-value from the correlation analysis and save it in the data frame we just created
+}
+
+head(results)
+```
+
+Tadaaaa :D Great work!!!! You did it. Time to high-five your neighbor.
+
+For the cherry on top: There's a function called `p.adjust()` that allows you to correct  _p_-values for multiple testing. You could add another column with adjusted _p_-values (e.g. with the false discovery rate FDR) and then save the table to a file to send to your supervisor! 
+
+```{r, echo=TRUE, eval=FALSE}
+results["pFDR"] <- p.adjust(results$p_value, method = "fdr") # the new p-values are larger i.e. fewer of them are significant. FDR is not a particularly strict method.
+write.csv(results, "correlation_analysis_results.csv", row.names = FALSE) # if you don't add 'row.names = FALSE', there will be one extra column with the row numbers. But that would be superfluous.
+```
+
+### T-test
+
+I don't know if you noticed but the samples we've been looking at we're really evenly sampled. Did you notice the gap? One way to visualize distributions is with violin plots. Do you think you can produce a violin plot (geom_violin) of the depth distribution of our samples?
+
+```{r}
+ggplot(stats, aes(x="Sponge samples", y=Depth))+
+  geom_violin(adjust = .5)+ # the argument/factor in the parenthesis just makes it look slimmer/snug.
+  geom_jitter(height = 0)
+```
+
+This uneven distribution made us think and go back to our data and talk to oceanographers. It turns out we tried to sample evenly but there weren't any sponge samples found between 900 and 1200 m. One hypothesis for this would be oceanic currents separating two populations. In that case, a correlation analysis assuming one continuous sample population wouldn't really be appropriate. We could use a `t.test` instead to test for differences between populations. We set the cutoff in the middle at 1000 m, to separate the two groups.
+
+Let's start again just with one compound, I'll pick barettin again. How can we select the signal intensity only for samples shallower or deeper than 1000 m respectively?
+
+Hint:
+```{r}
+# 'df$column' selects a column
+
+# [] allows you to set a condition or selection criterion. You can refer to another column and use < or > for instance
+
+```
+
+Solution:
+```{r}
+stats$barettin[stats$Depth<1000] # barettin signal from samples shallower (less than) 1000 m depth
+stats$barettin[stats$Depth>1000] # barettin signal from samples deeper (more than) 1000 m depth
+```
+
+Perfect, let's plug those into the t.test command!
+
+Solution:
+```{r}
+t.test(stats$barettin[stats$Depth<1000], stats$barettin[stats$Depth>1000])
+```
+The very small _p_-value tells us to reject the null hypothesis that the difference of the means is zero or deviations from it due to random coincidence.
+
+If you're feeling it, you could try to adapt the while loop we've worked on for the correlation analysis and modify it to work with the t-test. Otherwise, feel free to move on.
+
+```{r, echo=TRUE, eval=FALSE}
+# copy-pasted from before: empty data frame to collect the results
+results <- data.frame(colnames(stats[2:(dim(stats)[2]-1)]))
+colnames(results) <- "compound"
+results["p_value"] <- NA
+
+n <- 1
+
+while(n<dim(stats)[2]-1){
+  n <- n+1
+  k <- t.test(stats[,n][stats$Depth<1000], stats[,n][stats$Depth>1000]) # do the t-test and save it as 'k'
+  results$p_value[n-1] <- k$p.value # take the p-value from the t-test and save it in the data frame we just created
+}
+
+
+```
+
+Did you get an error message?
+
+`Error in t.test.default(stats[, n][stats$Depth < 1000], stats[, n][stats$Depth >  : not enough 'y' observations`
+  
+The cool thing now is you can have a look at the results and see where it failed! As of serotonin, the table is empty. We have too little data to perform this test for serotonin. It should work if you just delete the column for serotonin. `stats$serotonin <- NULL` but remember to also adapt the 'results' data frame (i.e. re-run that part of the code).
+
+Look at you, champ! You've made it through another tutorial! I hope you found some of the content useful for yourself. Keep going!

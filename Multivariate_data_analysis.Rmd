@@ -1,0 +1,225 @@
+---
+title: "Mulitvariate data analysis"
+author: "Karin Steffen"
+output: 
+  html_document:
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy=TRUE, message = FALSE, warning = FALSE)
+```
+
+## Learning outcomes: PCA, interactive 3D plots
+
+_I understand that maybe these detailed examples can feel more confusing than helpful. Therefore, should you feel frustrated about all my data wrangling and modification, don't stress. Copy-paste the code and fast-forward to where the plotting starts. That's totally fine._
+
+This set of exercises is based on untargeted metabolomics data ("metabolome") from three sponge species ( _Geodia barretti_, _Stryphnus fortis_ and _Weberella bursa_) but as you'll see in a minute, this data is really just huuuge matrices of numbers. Unlike in the 'targeted metabolomics' exercise, we really don't know which compounds we're looking at.
+
+The metabolome was acquired in **positive** and **negative** ionization mode on an Acquity I-Class Ultra Performance Liquid Chromatography UPLC (**HILIC** and **RP**) coupled to a G2S Synapt Q-TOF with an electrospray ionization (ESI) ion source. This means, in total we have four data set (HILIC positive, HILIC negative, RP positive and RP negative). I processed the raw data with [XCMS](https://pubs.acs.org/doi/10.1021/ac051437y) and [CAMERA](https://www.bioconductor.org/packages/devel/bioc/vignettes/CAMERA/inst/doc/CAMERA.pdf) in R. To give you an idea, these are the commands for the HILIC positive data set.
+
+The raw data is quite large, processing takes several days and I think this is a bit too specific, so we'll just explore the data together if that's okay. There's still plenty to do.
+
+```
+# HILIC 
+# setwd() 
+library(xcms)
+xset <- xcmsSet(method = "centWave", ppm = 8, peakwidth = c(5, 45), noise = 2000)
+save(xset, file = "HILIC_pos_xset_20190417.Rda")
+# load(file='HILIC_pos_xset_20190417.Rda') #When resuming after a break
+xset <- group(xset)
+xset2 <- retcor(xset, method = "obiwarp", response = 10, plottype = "deviation")
+xset2 <- group(xset2)
+xset3 <- fillPeaks(xset2)
+save(xset3, file = "HILIC_pos_xset3_20190417.Rda")
+reporttab <- diffreport(xset3, "Gb", "Sf", "Gb_Sf_HILIC_pos_20190417", 10)
+
+library(CAMERA)
+xsa <- xsAnnotate(xset3)
+xsaF <- groupFWHM(xsa, perfwhm = 0.3)
+xsaC <- groupCorr(xsaF, cor_eic_th = 0.7)
+xsaFI <- findIsotopes(xsaC)
+rules <- read.csv("data/rules_jan_pos.csv", header = T, sep = ",")
+xsaFA <- findAdducts(xsaFI, polarity = "positive", rules = rules)
+# write.csv(getPeaklist(xsaFA), file='HILIC_pos_20190417.csv')
+```
+
+The four data sets are called "HILIC_pos_...", "HILIC_neg_...", "RP_pos_.." and "RP_neg_..." and I provided you with the actual output of the above code, there's no secret sauce in between. You can load just the HILIC positive, the others are all fairly similar. This data goes with the same metadata as before (metadata_metabolomics.csv).
+
+```{r}
+HILIC_pos <- read.csv("data/HILIC_pos_20190417.csv")
+#HILIC_neg <- read.csv("data/HILIC_neg_20190421.csv")
+#RP_pos <- read.csv("data/RP_pos_20190421.csv")
+#RP_neg <- read.csv("data/RP_neg_20190422.csv")
+
+#for later
+meta_data <- read.csv("data/metadata_metabolomics.csv", header = T, sep = ";")
+```
+
+Have a look at the data frame. The first 12 columns are information about the data, which is present in the subsequent columns, called "IE_...". Every row is a feature (general term for ion or adduct).  A feature is characterized by a _m/z_ (mass over charge) in combination with a unique (range of) retention time rt. So for every sample, we have a value for each feature, that means: How much of unknown compound with _m/z_ _x_ and rt _y_ is present in each sample. The retention time is measured in seconds. Overall, among these "IE_..." samples there is the data from all samples plus a group of QC (pooled Quality control) samples.
+
+To start we 
+
+ - remove features that eluted in the void (less than 45 seconds retention time)
+ - remove features with a coefficient of variation greater 30% in the QC samples
+
+To be able to easily compare, I copied the HILIC_pos data frame and called it "raw_
+peaks".
+
+```{r}
+raw_peaks <- HILIC_pos
+
+# Removing features eluting in the void, i.e. I only keep rows with an rt greater than 45
+raw_peaks <- raw_peaks[raw_peaks$rt > 45, ]
+
+# Removing features with a CV > 30%
+f <- which(colnames(raw_peaks) == "IE_20170918_02001")  # finding the first QC sample, HILIC pos
+l <- which(colnames(raw_peaks) == "IE_20170918_07601")  # finding the last QC sample, HILIC pos
+
+# The coefficient of variation is defined as the standard deviation divided by the mean. So this is calculated for every feature, i.e. every row across the QC samples. I do it step-by-step.
+
+# apply() is a handy function that allows you, as the name indicates, to apply a function across either rows (1) or columns (2). You can see the functions I apply at the end. sd stands for standard deviation, mean is the mean. I specify "only across the QC samples" [, f:l].
+raw_peaks["SD"] <- apply(raw_peaks[, f:l], 1, sd)
+raw_peaks["MEAN"] <- apply(raw_peaks[, f:l], 1, mean)
+
+# Here I calculate the coefficient of variation
+raw_peaks["CV"] <- raw_peaks$SD/raw_peaks$MEAN
+
+# Now I only keep those rows with a coefficient of variation smaller than 0.3 or 30%
+raw_peaks <- raw_peaks[raw_peaks$CV < 0.3, ]
+HILIC_pos_cleaned <- raw_peaks
+# Now we have a filtered data set. You see we've lost some data (there are fewer rows in "HIILIC_pos_cleaned" then in "HIILIC_pos"). If you want to, you can scroll to the end of the data frame and see the new columns withsd, mean and cv.
+```
+
+For the multivariate analyses, we need only numerical data. And it needs to be in the proper format, that is rows are observations (the samples) and columns are variables (the features). This is a bit boring and tedious and as I repeated this several times across the different data sets and all kinds of analyses I did, I wrapped all the commands in a function. 
+
+I've annotated it for you but I don't expect you to write this yourself. But it might be interesting to see it's no big deal. To use it, you need to execute the function that I've called "formatting", it will appear to your right in "Functions" and the single command at the bottom (`hilic_pos <- formatting(HILIC_pos_cleaned, meta_data, 6, "LC.MS.HILIC.positive")`) executes all of that at once.
+
+```{r}
+library(tidyverse)
+
+formatting <- function(metabolome, meta_data, r, my_colnames) {
+    formatted <- metabolome
+    formatted <- formatted[, 14:(dim(formatted)[2] - r)] # delete the first couple of columns
+    formatted <- data.frame(t(formatted)) # transpose the data
+    formatted["ID"] <- rownames(formatted) # a couple of steps to replace the sample names with the unified_ID I used across several analyses
+    formatted["unified_ID"] <- meta_data$unified_ID[match(formatted$ID, meta_data[[my_colnames]])]
+    formatted["filter"] <- str_sub(formatted$unified_ID, 1, 2)
+    formatted <- formatted[!formatted$filter == "QC", ] # remove QC samples
+    formatted <- na.omit(formatted) # remove missing data/NA's
+    # formatted$filter <- NULL
+    formatted$ID <- NULL # delete superfluous column
+    formatted <- formatted[order(formatted$unified_ID), ] # sort table
+    rownames(formatted) <- formatted$unified_ID # set IDs as rownames
+    formatted$unified_ID <- NULL # delete superfluous column
+    formatted$filter <- NULL
+    return(formatted) # return the modified data frame
+}
+
+hilic_pos <- formatting(HILIC_pos_cleaned, meta_data, 6, "LC.MS.HILIC.positive")
+# hilic_pos[1:5, 1:5] # to see the beginning of the data frame
+
+# to not get confused woth our other data sets, let's delete them
+rm(HILIC_pos_cleaned, HILIC_pos)
+```
+
+This is now a data set ready for analyses.
+
+## PCA
+
+A PCA is a dimensionality reduction method for data exploration. We have a total of 44 samples (across three species) but 3508 variables (features or metabolites). The PCA helps to linearly combine the variables to account for most variation in that data in new artificial "principal components" (PC). The first, PC1, should explain most of the variation in the data.
+
+The function to perform a PCA is called `prcomp()` and very straight forward. 
+
+```{r}
+# The PCA itself
+sponge_pca <- prcomp(hilic_pos, scale = T) 
+
+# Save the summary
+pca_summary <- summary(prcomp(hilic_pos, scale = TRUE))
+
+# The "proportion of variance" is how much of the total variation is explained by a PC.
+pca_summary$importance
+
+#biplot(prcomp(hilic_pos, scale = TRUE)) # You can start drawing this and then press stop before R overlays all the loadings and you don't see anything anymore...
+# The values to be plotted are in sponge_pca$x
+
+# This is the start of the data frame
+sponge_pca$x[1:5, 1:5]
+```
+
+sponge_pca$x are the scores, the values for the new principal components to describe our samples. We'll use these to plot the PCA. You can do this already. Make a plot with the first two principal components using ggplot2.
+
+Hint:
+```{r}
+# "sponge_pca$x" is not a data frame and so ggplot will complain.
+# you can make it a data frame with this simple command: data.frame()
+```
+
+Solution:
+```{r}
+pca_plot <- data.frame(sponge_pca$x)
+ggplot(pca_plot, aes(x=PC1, y=PC2))+geom_point()
+```
+
+Yippie! 
+To make this meaningful, let's use the metadata. We can retrieve the unified_ID from the rownames of the data frame and use the text replacement command `gsub()` to replace all numbers of any length '[0-9]*' with nothing ''. We then can set e.g. the shape or color of the dots with it. Also, let's add the information about the variation per PC to the axes.
+
+Solution:
+```{r}
+k <- pca_summary$importance
+x_lab <- paste("PC1", round(k[2, 1], digits = 3) * 100, "%") # we're taking the value for PC1, transform it into percent, and make it a pasteable text string.
+y_lab <- paste("PC2", round(k[2, 2], digits = 3) * 100, "%") # we're taking the value for PC2, transform it into percent, and make it a pasteable text string.
+    
+pca_plot["unified_ID"] <- rownames(pca_plot)
+pca_plot["species"] <- gsub('[0-9]*','', pca_plot$unified_ID)
+
+ggplot(pca_plot, aes(x = PC1, y = PC2))+
+  geom_point(size = 3, aes(shape = factor(species)))+
+  labs(x=x_lab, y=y_lab)+
+  theme(legend.position = "bottom")
+```
+
+Fantastic! Well done =) You've come so far!
+
+To see if you've got it, can you produce a plot with PC2 and PC3?
+```{r, echo=TRUE, eval=FALSE}
+k <- pca_summary$importance
+x_lab <- paste("PC2", round(k[2, 2], digits = 3) * 100, "%") # we're taking the value for PC1, transform it into percent, and make it a pasteable text string.
+y_lab <- paste("PC3", round(k[2, 3], digits = 3) * 100, "%") # we're taking the value for PC2, transform it into percent, and make it a pasteable text string.
+    
+pca_plot["unified_ID"] <- rownames(pca_plot)
+pca_plot["species"] <- gsub('[0-9]*','', pca_plot$unified_ID)
+
+ggplot(pca_plot, aes(x = PC2, y = PC3))+
+  geom_point(size = 3, aes(shape = factor(species)))+
+  labs(x=x_lab, y=y_lab)+
+  theme(legend.position = "bottom")
+```
+
+From here if you feel that you want to continue, there is more things we can do with this data. We can add a third axis (PC3) and produce interactive 3D plots. To have one more nice aspect to work with, I'll add sample depth to the data frame.
+
+```{r}
+pca_plot <- left_join(pca_plot, meta_data[,c("unified_ID", "Depth")])
+
+library(plotly)
+
+# format background and axes
+
+axx <- list(backgroundcolor = "rgb(211,211,211)", gridcolor = "rgb(255,255,255)", title = "PC1", showbackground = TRUE)
+axy <- list(backgroundcolor = "rgb(211,211,211)", gridcolor = "rgb(255,255,255)", title = "PC2", showbackground = TRUE)
+axz <- list(backgroundcolor = "rgb(211,211,211)", gridcolor = "rgb(255,255,255)", title = "PC3", showbackground = TRUE)
+
+pca_3D <- plot_ly(pca_plot, x = ~pca_plot$PC1, y = ~pca_plot$PC2, z = ~pca_plot$PC3, symbol = ~pca_plot$species, symbols = c("diamond", "x", "circle"), color = ~pca_plot$Depth) %>% 
+    add_markers() %>% layout(scene = list(xaxis = axx, yaxis = axy, zaxis = axz))
+pca_3D
+
+# you can saving this as html file to open in you browser like so: 
+#f<- basename(tempfile('pca_3D_plotly', '.', '.html')) 
+#on.exit(unlink(f), add = TRUE) 
+#html <- htmlwidgets::saveWidget(pca_3D, f)
+```
+
+If you're interested in metabolomics, check out the fantastic package [ropls](https://bioconductor.org/packages/release/bioc/html/ropls.html)
+And now go and take a break! You deserve it!
+

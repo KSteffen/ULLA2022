@@ -1,0 +1,77 @@
+---
+title: "mdatools minitutorial"
+author: "Sergey Kucheryavski, (Karin Steffen)"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Hyperspectral image analysis with mdatools
+
+_Disclaimer_: I have no idea about this kind of analyses at all. But this is the beauty of R. Someone does and has made a package called [mdatools](https://www.mdatools.com/) to perform hyperspectral image analyses. You can find a full tutorial [here](https://mdatools.com/docs/datasets--images.html). This is a walk-through very kindly provided by Prof. Sergey Kucheryavsk from Aalborg University.
+
+Data description: This is a 40 x 40 pixels sized Raman map of a cell (total 1600 spectra). The first row is wavenumber axis and after that the 40 following rows form the first row of the image etc. 
+
+Comment by Sergey: The only issue here is that in R when column vector is refolded to an image (e.g. for a given wavenumber), it does it column wise, so first 40 values will be taken as first column. Which means that the images will be all rotated by 90 degrees in your case.
+
+```{r}
+library(mdatools)
+library(readxl)
+
+# load the spectra and the wavenumbers
+d = read_excel("data/cellMap.xlsx")
+spectra = as.matrix(d)
+
+# take the column names and convert them to wavenumbers
+w = as.numeric(gsub(",", ".", colnames(d)))
+attr(spectra, "xaxis.values") = w
+attr(spectra, "xaxis.name") = expression("Raman shift, cm"^-1)
+
+# make a plot for random subset of 20 spectra to check how they look like
+mdaplot(mda.subset(spectra, sample(nrow(spectra))[1:20]), type = "l")
+
+# add attributes to convert spectra to image (in terms of mdatools)
+attr(spectra, "width") = 40
+attr(spectra, "height") = 40
+
+# show spectral image for channel #100
+imshow(spectra, 100, main = paste0(w[100], " cm-1"))
+
+# do PCA with 5 components        
+m = pca(spectra, 5)
+
+# show score images
+par(mfrow = c(1, 5))
+for (i in 1:5) {
+   imshow(m$res$cal$scores, i, main = paste0("Scores: PC", i))
+}
+
+# show q-distance images
+par(mfrow = c(1, 5))
+for (i in 1:5) {
+   imshow(m$res$cal$Q, i, main = paste0("q-distance: PC", i))
+}
+
+# show h-distance (T2) images
+par(mfrow = c(1, 5))
+for (i in 1:5) {
+   imshow(m$res$cal$T2, i, main = paste0("h-distance: PC", i))
+}
+
+# do MCR with Purity based method
+m2 = mcrpure(spectra, 4)
+
+# show resolved contributions as maps
+par(mfrow = c(1, 4))
+for (i in 1:4) {
+   imshow(m2$rescont, i, main = paste0("Contribution: Comp", i))
+}
+
+# show resolved concentrations
+par(mfrow = c(1, 1))
+plotSpectra(m2)
+
+```
+
